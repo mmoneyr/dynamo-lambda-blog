@@ -1,0 +1,11 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "sam-app-red-dyn"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-ktwds16v8elm"
+s3_prefix = "sam-app-red-dyn"
+region = "eu-west-1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "ProjectName=\"Redis-Listener-Sample\" LatestAmiId=\"/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2\" ElasticacheInstanceClass=\"cache.t3.micro\" EC2KeyName=\"aws\""
+image_repositories = []

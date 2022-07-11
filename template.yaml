@@ -2,6 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: ElastiCache and DynamoDB example
 
+# Run: sam deploy -t template.yaml --stack-name sam-app-red-dyn  --config-file samconfig.toml
+
 Parameters:
   ProjectName:
     Type: String
@@ -13,17 +15,16 @@ Parameters:
 
   ElasticacheInstanceClass:
     Type: String
-    Default: cache.t3.small
+    Default: cache.t3.micro
   
   EC2KeyName:
     Type: String
-    Default: nmmashko-kp-two
+    Default: aws # nmmashko-kp-two
 
 Globals:
   Function:
-    Runtime: go1.x
-    Handler: dynamo-go
-    MemorySize: 512
+    Runtime: nodejs14.x
+    MemorySize: 1024
     Timeout: 15
     Tags:
       Project: !Ref ProjectName
@@ -48,7 +49,7 @@ Resources:
   EC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t3.medium
+      InstanceType: t3.small
       ImageId: !Ref LatestAmiId
       KeyName: !Ref EC2KeyName
       Monitoring: true
@@ -75,7 +76,7 @@ Resources:
       ReplicationGroupId: !Sub "${ProjectName}-cluster"
       # enable Cluster Mode
       CacheParameterGroupName: !Ref RedisClusterParameterGroup
-      CacheNodeType: cache.t3.medium
+      CacheNodeType: cache.t3.micro
       CacheSubnetGroupName:  !Ref RedisSubnetGroup
       Engine: redis
       EngineVersion: 5.0.6
@@ -210,19 +211,33 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
   
-  DynamoGo:
-    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+  # DynamoGo:
+  #   Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+  #   Properties:
+  #     CodeUri: dynamo-go/
+  #     Handler: dynamo-go
+  #     Runtime: go1.x
+  #     Policies:
+  #       - AmazonDynamoDBFullAccess
+  #     Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
+  #     Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
+  #       Variables:
+  #         DYNAMO_TABLE_NAME: !Ref RedisDataTable
+  
+  web3UpdatePricesTempFunction:
+    Type: AWS::Serverless::Function 
     Properties:
-      CodeUri: dynamo-go/
-      Handler: dynamo-go
-      Runtime: go1.x
+      Timeout: 15
+      CodeUri: web3-realtime-token-prices/dist
+      Handler: index.web3UpdatePriceData
+      FunctionName: web3UpdatePricesTemp
       Policies:
         - AmazonDynamoDBFullAccess
       Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
       Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
         Variables:
           DYNAMO_TABLE_NAME: !Ref RedisDataTable
-  
+
   RedisDataTable:
     Type: AWS::DynamoDB::Table
     Properties: 
@@ -242,10 +257,10 @@ Resources:
       VpcId: !Ref VPC
       GroupDescription: EC2 Security Group
       SecurityGroupIngress:
-         - IpProtocol: tcp
-           CidrIp: 0.0.0.0/0
-           FromPort: 22
-           ToPort: 22      
+          - IpProtocol: tcp
+            CidrIp: 0.0.0.0/0
+            FromPort: 22
+            ToPort: 22      
       Tags:
         - Key: Project
           Value: !Ref ProjectName    
@@ -261,9 +276,9 @@ Outputs:
   RedisCluster:
     Description: "Redis Cluster Primary Endpoint"
     Value: !GetAtt RedisCluster.PrimaryEndPoint.Address
-  DynamoGo:
-    Description: "ARN of Lambda Function"
-    Value: !GetAtt DynamoGo.Arn
+  web3UpdatePricesTempFunction:
+    Description: "ARN of Lambda web3UpdatePricesTempFunction Function"
+    Value: !GetAtt web3UpdatePricesTempFunction.Arn
   RedisDataTable:
     Description: "Name of the DynamoDB destination table"
     Value: !Ref RedisDataTable

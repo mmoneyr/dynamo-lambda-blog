@@ -1,0 +1,12 @@
+{
+  "name": "@moneyrio/lambda-web3-update-defi-prices",
+  "version": "1.0.1",
+  "description": "Updating Actual token prices to db",
+  "main": "dist/index.js",
+  "license": "MIT",
+  "scripts": {
+    "watch": "webpack --mode=development --watch",
+    "prod": "webpack --mode=production",
+    "dev": "webpack --mode=development"
+  }
+}
