@@ -31,7 +31,7 @@ async function getTokenPrice(address: string, apiclient: TokenPricesAPI): Promis
 async function updatePricesData(event: ILambdaEvent): Promise<any> {
   console.log("updatePricesData start");
 
-  const client = new RedisCache(Environment.config.redis.PORT, Environment.config.redis.REDIS_SERVER_HOST);
+  const client = new RedisCache(Environment.config.redis.PORT, "redis-listener-sample-cluster.c7kdfs.ng.0001.euw1.cache.amazonaws.com");
   // console.log(typeof(client));
   console.log(client.isConnected());
   console.log(JSON.stringify(client.isConnected()));
