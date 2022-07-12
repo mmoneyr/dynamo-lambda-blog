@@ -1,0 +1,447 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: ElastiCache and DynamoDB example
+Parameters:
+  ProjectName:
+    Type: String
+    Default: Redis-Listener-Sample
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2
+  ElasticacheInstanceClass:
+    Type: String
+    Default: cache.t3.micro
+  EC2KeyName:
+    Type: String
+    Default: aws
+Globals:
+  Function:
+    Runtime: nodejs14.x
+    MemorySize: 1024
+    Timeout: 15
+    Tags:
+      Project:
+        Ref: ProjectName
+Mappings:
+  SubnetConfig:
+    VPC:
+      CIDR: 10.0.0.0/16
+    Private1:
+      CIDR: 10.0.0.0/24
+    Private2:
+      CIDR: 10.0.1.0/24
+    Lambda1:
+      CIDR: 10.0.2.0/24
+    Lambda2:
+      CIDR: 10.0.3.0/24
+    Public1:
+      CIDR: 10.0.4.0/24
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.small
+      ImageId:
+        Ref: LatestAmiId
+      KeyName:
+        Ref: EC2KeyName
+      Monitoring: true
+      SecurityGroupIds:
+      - Ref: EC2InstanceSecurityGroup
+      SubnetId:
+        Ref: PublicSubnet1
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${ProjectName}-Instance
+  RedisClusterParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      Description:
+        Fn::Sub: ${ProjectName}-parameter-group
+      CacheParameterGroupFamily: redis5.0
+      Properties:
+        notify-keyspace-events: EA
+  RedisCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      AutoMinorVersionUpgrade: true
+      ReplicationGroupId:
+        Fn::Sub: ${ProjectName}-cluster
+      CacheParameterGroupName:
+        Ref: RedisClusterParameterGroup
+      CacheNodeType: cache.t3.micro
+      CacheSubnetGroupName:
+        Ref: RedisSubnetGroup
+      Engine: redis
+      EngineVersion: 5.0.6
+      NumNodeGroups: 1
+      Port: 6379
+      ReplicasPerNodeGroup: 1
+      ReplicationGroupDescription:
+        Fn::Sub: ${ProjectName}-Redis-Replication-Group
+      SecurityGroupIds:
+      - Ref: RedisSecurityGroup
+      Tags:
+      - Key: Project
+        Value:
+          Ref: ProjectName
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Redis subnet group
+      SubnetIds:
+      - Ref: PrivateSubnet1
+      - Ref: PrivateSubnet2
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: Enable Redis access
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 6379
+        ToPort: 6379
+        SourceSecurityGroupId:
+          Ref: EC2InstanceSecurityGroup
+      Tags:
+      - Key: Project
+        Value:
+          Ref: ProjectName
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock:
+        Fn::FindInMap:
+        - SubnetConfig
+        - VPC
+        - CIDR
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${ProjectName}-vpc
+      - Key: Project
+        Value:
+          Ref: ProjectName
+  EC2InstanceInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: name
+        Value:
+          Fn::Sub: ${ProjectName}-ig
+  EC2InstanceAttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId:
+        Ref: VPC
+      InternetGatewayId:
+        Ref: EC2InstanceInternetGateway
+  EC2InstanceRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${ProjectName}-rt
+  EC2InstanceRouteTableRoute:
+    Type: AWS::EC2::Route
+    DependsOn: EC2InstanceAttachGateway
+    Properties:
+      RouteTableId:
+        Ref: EC2InstanceRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        Ref: EC2InstanceInternetGateway
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId:
+        Ref: VPC
+      AvailabilityZone:
+        Fn::Select:
+        - 0
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      CidrBlock:
+        Fn::FindInMap:
+        - SubnetConfig
+        - Public1
+        - CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Join:
+          - '-'
+          - - Ref: AWS::StackName
+            - public-subnet
+      - Key: Project
+        Value:
+          Ref: ProjectName
+  publicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+  publicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: EC2InstanceAttachGateway
+    Properties:
+      RouteTableId:
+        Ref: publicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        Ref: EC2InstanceInternetGateway
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: EC2InstanceRouteTable
+      SubnetId:
+        Ref: PublicSubnet1
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+        - 0
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::FindInMap:
+        - SubnetConfig
+        - Private1
+        - CIDR
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${ProjectName}-private-subnet-1
+      - Key: Project
+        Value:
+          Ref: ProjectName
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+        Fn::Select:
+        - 1
+        - Fn::GetAZs:
+            Ref: AWS::Region
+      VpcId:
+        Ref: VPC
+      CidrBlock:
+        Fn::FindInMap:
+        - SubnetConfig
+        - Private2
+        - CIDR
+      Tags:
+      - Key: Name
+        Value:
+          Fn::Sub: ${ProjectName}-private-subnet-2
+      - Key: Project
+        Value:
+          Ref: ProjectName
+  natGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: natPublicIP
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+        - natPublicIP
+        - AllocationId
+      SubnetId:
+        Ref: PublicSubnet1
+  natPublicIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPC
+    Properties:
+      Domain: vpc
+  privateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
+  privateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: privateRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId:
+        Ref: natGateway
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnet1
+      RouteTableId:
+        Ref: privateRouteTable
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnet2
+      RouteTableId:
+        Ref: privateRouteTable
+  s3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action:
+          - s3:*
+          Resource:
+          - '*'
+      RouteTableIds:
+      - Ref: privateRouteTable
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.s3
+      VpcId:
+        Ref: VPC
+  dynamoDBEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: '*'
+          Action:
+          - dynamodb:*
+          Resource:
+          - '*'
+      RouteTableIds:
+      - Ref: privateRouteTable
+      ServiceName:
+        Fn::Sub: com.amazonaws.${AWS::Region}.dynamodb
+      VpcId:
+        Ref: VPC
+  web3UpdatePricesTempFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 15
+      CodeUri: web3UpdatePricesTempFunction
+      Handler: index.web3UpdatePriceData
+      FunctionName: web3UpdatePricesTemp
+      Policies:
+      - AmazonDynamoDBFullAccess
+      Tracing: Active
+      Environment:
+        Variables:
+          DYNAMO_TABLE_NAME:
+            Ref: RedisDataTable
+    Metadata:
+      SamResourceId: web3UpdatePricesTempFunction
+  RedisDataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: id
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+  EC2InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPC
+      GroupDescription: EC2 Security Group
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        CidrIp: '0.0.0.0/0'
+        FromPort: 22
+        ToPort: 22
+      Tags:
+      - Key: Project
+        Value:
+          Ref: ProjectName
+Outputs:
+  EC2Instance:
+    Description: ElastiCache Instance URL
+    Value:
+      Fn::GetAtt:
+      - EC2Instance
+      - PublicDnsName
+  RedisCluster:
+    Description: Redis Cluster Primary Endpoint
+    Value:
+      Fn::GetAtt:
+      - RedisCluster
+      - PrimaryEndPoint.Address
+  web3UpdatePricesTempFunction:
+    Description: ARN of Lambda web3UpdatePricesTempFunction Function
+    Value:
+      Fn::GetAtt:
+      - web3UpdatePricesTempFunction
+      - Arn
+  RedisDataTable:
+    Description: Name of the DynamoDB destination table
+    Value:
+      Ref: RedisDataTable
+  pubPrivateVPCID:
+    Description: VPC ID
+    Value:
+      Ref: VPC
+    Export:
+      Name:
+        Fn::Join:
+        - '-'
+        - - Ref: AWS::StackName
+          - vpc
+  PublicSubnet1ID:
+    Description: Public Subnet A ID
+    Value:
+      Ref: PublicSubnet1
+    Export:
+      Name:
+        Fn::Join:
+        - '-'
+        - - Ref: AWS::StackName
+          - public-subnet-a
+  PrivateSubnet1ID:
+    Description: Private Subnet A ID
+    Value:
+      Ref: PrivateSubnet1
+    Export:
+      Name:
+        Fn::Join:
+        - '-'
+        - - Ref: AWS::StackName
+          - private-subnet-a
+  PrivateSubnet2ID:
+    Description: Private Subnet B ID
+    Value:
+      Ref: PrivateSubnet2
+    Export:
+      Name:
+        Fn::Join:
+        - '-'
+        - - Ref: AWS::StackName
+          - private-subnet-b
+  privateVPCSecurityGroup:
+    Description: Default security for Lambda VPC
+    Value:
+      Fn::GetAtt:
+      - VPC
+      - DefaultSecurityGroup
+    Export:
+      Name:
+        Fn::Join:
+        - '-'
+        - - Ref: AWS::StackName
+          - vpc-sg

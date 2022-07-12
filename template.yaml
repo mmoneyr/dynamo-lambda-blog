@@ -159,21 +159,61 @@ Resources:
       GatewayId:
         Ref: EC2InstanceInternetGateway
           
+  # PublicSubnet1:
+  #   Type: AWS::EC2::Subnet
+  #   Properties: 
+  #     AvailabilityZone:
+  #       Fn::Select:
+  #       - 0
+  #       - Fn::GetAZs: !Ref AWS::Region      
+  #     CidrBlock: !FindInMap ['SubnetConfig', 'Public1', 'CIDR']
+  #     MapPublicIpOnLaunch: true
+  #     Tags: 
+  #       - Key: Name
+  #         Value: !Sub "${ProjectName}-public-subnet-1"
+  #       - Key: Project
+  #         Value: !Ref ProjectName
+  #     VpcId: !Ref VPC
   PublicSubnet1:
     Type: AWS::EC2::Subnet
-    Properties: 
+    Properties:
+      VpcId: !Ref VPC
       AvailabilityZone:
         Fn::Select:
-        - 0
-        - Fn::GetAZs: !Ref AWS::Region      
+          - 0
+          - Fn::GetAZs: !Ref AWS::Region
       CidrBlock: !FindInMap ['SubnetConfig', 'Public1', 'CIDR']
       MapPublicIpOnLaunch: true
-      Tags: 
+      Tags:
         - Key: Name
-          Value: !Sub "${ProjectName}-public-subnet-1"
+          Value: !Join ["-", [!Ref "AWS::StackName","public-subnet"]]
         - Key: Project
           Value: !Ref ProjectName
+
+  # internetGateway:
+  #   Type: AWS::EC2::InternetGateway
+  #   Properties:
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Join ["-", [!Ref "AWS::StackName","gateway"]]
+  # gatewayToInternet:
+  #   Type: AWS::EC2::VPCGatewayAttachment
+  #   Properties:
+  #     VpcId: !Ref VPC
+  #     InternetGatewayId: !Ref internetGateway
+  publicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
       VpcId: !Ref VPC
+  publicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: EC2InstanceAttachGateway
+    Properties:
+      RouteTableId: !Ref publicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref EC2InstanceInternetGateway
+
+
 
   PublicSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -210,20 +250,78 @@ Resources:
           Value: !Sub "${ProjectName}-private-subnet-2"
         - Key: Project
           Value: !Ref ProjectName
-  
-  # DynamoGo:
-  #   Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
-  #   Properties:
-  #     CodeUri: dynamo-go/
-  #     Handler: dynamo-go
-  #     Runtime: go1.x
-  #     Policies:
-  #       - AmazonDynamoDBFullAccess
-  #     Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
-  #     Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
-  #       Variables:
-  #         DYNAMO_TABLE_NAME: !Ref RedisDataTable
-  
+
+
+
+
+  natGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: natPublicIP
+    Properties:
+      AllocationId: !GetAtt natPublicIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+  natPublicIP:
+    Type: AWS::EC2::EIP
+    DependsOn: VPC
+    Properties:
+      Domain: vpc
+  privateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  privateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref privateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref natGateway
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref privateRouteTable
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref privateRouteTable
+  s3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: "*"
+          Action:
+            - "s3:*"
+          Resource:
+            - "*"
+      RouteTableIds:
+        - !Ref privateRouteTable
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcId: !Ref VPC
+  dynamoDBEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal: "*"
+          Action:
+            - "dynamodb:*"
+          Resource:
+            - "*"
+      RouteTableIds:
+        - !Ref privateRouteTable
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.dynamodb
+      VpcId: !Ref VPC
+
+
+
+
+
   web3UpdatePricesTempFunction:
     Type: AWS::Serverless::Function 
     Properties:
@@ -233,10 +331,43 @@ Resources:
       FunctionName: web3UpdatePricesTemp
       Policies:
         - AmazonDynamoDBFullAccess
+      #   - Statement:
+      #     - Sid: AWSLambdaVPCAccessExecutionRole
+      #       Effect: Allow
+      #       Action:
+      #         - logs:CreateLogGroup
+      #         - logs:CreateLogStream
+      #         - logs:PutLogEvents
+      #         - ec2:CreateNetworkInterface
+      #         - ec2:DescribeNetworkInterfaces
+      #         - ec2:DeleteNetworkInterface
+      #         - dynamodb:GetItem
+      #         - dynamodb:Scan
+      #         - dynamodb:Query
+      #         - dynamodb:BatchGetItem
+      #         - dynamodb:DescribeTable
+      #       Resource: "*"
+      # # VpcConfig:
+      # #   # VpcId: !Ref pubPrivateVPC
+      # #   SecurityGroupIds:
+      # #     - !Ref: InstanceLamSecurityGroup
+      # #     # - sg-0c340327ec79c5ee9
+      # #   SubnetIds:
+      # #     - !Ref PublicSubnet1
+      # #     - !Ref PrivateSubnet1
+      # #     - !Ref PrivateSubnet2
+      # #     # - subnet-ea8c6da1
+      # #     # - subnet-7d26301b
+      # #     # - subnet-ca005390
       Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
       Environment: # More info about Env Vars: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#environment-object
         Variables:
           DYNAMO_TABLE_NAME: !Ref RedisDataTable
+
+
+
+
+
 
   RedisDataTable:
     Type: AWS::DynamoDB::Table
@@ -282,3 +413,29 @@ Outputs:
   RedisDataTable:
     Description: "Name of the DynamoDB destination table"
     Value: !Ref RedisDataTable
+
+  pubPrivateVPCID:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","vpc"]]
+  PublicSubnet1ID:
+    Description: Public Subnet A ID
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","public-subnet-a"]]
+  PrivateSubnet1ID:
+    Description: Private Subnet A ID
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","private-subnet-a"]]
+  PrivateSubnet2ID:
+    Description: Private Subnet B ID
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","private-subnet-b"]]
+  privateVPCSecurityGroup:
+    Description: Default security for Lambda VPC
+    Value: !GetAtt VPC.DefaultSecurityGroup
+    Export:
+      Name: !Join ["-", [!Ref "AWS::StackName","vpc-sg"]]

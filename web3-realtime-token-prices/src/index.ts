@@ -5,6 +5,7 @@
 import { Environment, IEthChain, ILambdaEvent, ITokenPrice } from '@moneyrio/common';
 import { LambdaServerUtils } from '@moneyrio/common-lambda';
 import { PancakeAPI, TokenPricesAPI } from '@moneyrio/exchanges-api';
+import axios from 'axios';
 import { SaveTokenPricesToDB, GetTokenPricesFromDB } from '../../common/price-feed';
 import { RedisCache } from '../../common/redis-client';
 
@@ -35,6 +36,8 @@ async function updatePricesData(event: ILambdaEvent): Promise<any> {
   // console.log(typeof(client));
   console.log(client.isConnected());
   console.log(JSON.stringify(client.isConnected()));
+  // // let res = await axios.get("https://monoceros.app");
+  // // console.log(res.data);
   console.log("OK");
   if (true || false) {
     for (let chain of SUPPORTED_CHAINS) {
